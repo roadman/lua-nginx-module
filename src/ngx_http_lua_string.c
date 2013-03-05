@@ -770,11 +770,11 @@ ngx_http_lua_ngx_decode_hex(lua_State *L)
 
     if(len)
     {
-        lua_pushlstring(L, (char *) p.data, p.len);
+        lua_pushnil(L);
     }
     else
     {
-        lua_pushnil(L);
+        lua_pushlstring(L, (char *) p.data, p.len);
     }
 
     ngx_pfree(r->pool, p.data);
