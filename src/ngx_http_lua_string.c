@@ -757,8 +757,8 @@ ngx_http_lua_ngx_decode_hex(lua_State *L)
     }
 
     for(len = p.len, set = p.data, hexstr = src.data;
-        len--;
-        hexstr += 2)
+        len;
+        hexstr += 2, len--)
     {
         if((value = ngx_hextoi(hexstr, 2)) == NGX_ERROR)
         {
