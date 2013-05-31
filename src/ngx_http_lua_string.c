@@ -137,27 +137,17 @@ ngx_http_lua_ngx_escape_uri(lua_State *L)
     src = (u_char *) luaL_checklstring(L, 1, &len);
 
     if (len == 0) {
-        lua_pushlstring(L, NULL, 0);
         return 1;
     }
 
     escape = 2 * ngx_http_lua_escape_uri(NULL, src, len, NGX_ESCAPE_URI);
 
-    dlen = escape + len;
-
-    dst = ngx_palloc(r->pool, dlen);
-    if (dst == NULL) {
-        return luaL_error(L, "memory allocation error");
-    }
-
-    if (escape == 0) {
-        ngx_memcpy(dst, src, len);
-
-    } else {
+    if (escape) {
+        dlen = escape + len;
+        dst = lua_newuserdata(L, dlen);
         ngx_http_lua_escape_uri(dst, src, len, NGX_ESCAPE_URI);
+        lua_pushlstring(L, (char *) dst, dlen);
     }
-
-    lua_pushlstring(L, (char *) dst, dlen);
 
     return 1;
 }
@@ -189,10 +179,7 @@ ngx_http_lua_ngx_unescape_uri(lua_State *L)
     /* the unescaped string can only be smaller */
     dlen = len;
 
-    p = ngx_palloc(r->pool, dlen);
-    if (p == NULL) {
-        return luaL_error(L, "memory allocation error");
-    }
+    p = lua_newuserdata(L, dlen);
 
     dst = p;
 
@@ -238,10 +225,7 @@ ngx_http_lua_ngx_quote_sql_str(lua_State *L)
 
     dlen = sizeof("''") - 1 + len + escape;
 
-    p = ngx_palloc(r->pool, dlen);
-    if (p == NULL) {
-        return luaL_error(L, "out of memory");
-    }
+    p = lua_newuserdata(L, dlen);
 
     dst = p;
 
@@ -363,9 +347,9 @@ ngx_http_lua_ngx_md5(lua_State *L)
         return luaL_error(L, "expecting one argument");
     }
 
-    if (strcmp(luaL_typename(L, 1), (char *) "nil") == 0) {
-        src     = (u_char *) "";
-        slen    = 0;
+    if (lua_isnil(L, 1)) {
+        src = (u_char *) "";
+        slen = 0;
 
     } else {
         src = (u_char *) luaL_checklstring(L, 1, &slen);
@@ -470,9 +454,9 @@ ngx_http_lua_ngx_decode_base64(lua_State *L)
         return luaL_error(L, "expecting one argument");
     }
 
-    if (strcmp(luaL_typename(L, 1), (char *) "nil") == 0) {
-        src.data     = (u_char *) "";
-        src.len      = 0;
+    if (lua_isnil(L, 1)) {
+        src.data = (u_char *) "";
+        src.len = 0;
 
     } else {
         src.data = (u_char *) luaL_checklstring(L, 1, &src.len);
@@ -480,10 +464,7 @@ ngx_http_lua_ngx_decode_base64(lua_State *L)
 
     p.len = ngx_base64_decoded_length(src.len);
 
-    p.data = ngx_palloc(r->pool, p.len);
-    if (p.data == NULL) {
-        return NGX_ERROR;
-    }
+    p.data = lua_newuserdata(L, p.len);
 
     if (ngx_decode_base64(&p, &src) == NGX_OK) {
         lua_pushlstring(L, (char *) p.data, p.len);
@@ -517,9 +498,9 @@ ngx_http_lua_ngx_encode_base64(lua_State *L)
         return luaL_error(L, "expecting one argument");
     }
 
-    if (strcmp(luaL_typename(L, 1), (char *) "nil") == 0) {
-        src.data     = (u_char *) "";
-        src.len      = 0;
+    if (lua_isnil(L, 1)) {
+        src.data = (u_char *) "";
+        src.len = 0;
 
     } else {
         src.data = (u_char *) luaL_checklstring(L, 1, &src.len);
@@ -527,10 +508,7 @@ ngx_http_lua_ngx_encode_base64(lua_State *L)
 
     p.len = ngx_base64_encoded_length(src.len);
 
-    p.data = ngx_palloc(r->pool, p.len);
-    if (p.data == NULL) {
-        return NGX_ERROR;
-    }
+    p.data = lua_newuserdata(L, p.len);
 
     ngx_encode_base64(&p, &src);
 

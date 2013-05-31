@@ -88,6 +88,10 @@ static ngx_http_lua_set_header_t  ngx_http_lua_set_handlers[] = {
                  offsetof(ngx_http_headers_out_t, etag),
                  ngx_http_set_builtin_header },
 
+    { ngx_string("ETag"),
+                 offsetof(ngx_http_headers_out_t, etag),
+                 ngx_http_set_builtin_header },
+
     { ngx_string("Content-Length"),
                  offsetof(ngx_http_headers_out_t, content_length),
                  ngx_http_set_content_length_header },
@@ -188,7 +192,7 @@ new_header:
     h = ngx_list_push(&r->headers_out.headers);
 
     if (h == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        return NGX_ERROR;
     }
 
     if (value->len == 0) {
@@ -203,7 +207,7 @@ new_header:
 
     h->lowcase_key = ngx_pnalloc(r->pool, h->key.len);
     if (h->lowcase_key == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        return NGX_ERROR;
     }
 
     ngx_strlow(h->lowcase_key, h->key.data, h->key.len);

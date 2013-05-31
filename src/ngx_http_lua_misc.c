@@ -57,6 +57,7 @@ ngx_http_lua_ngx_get(lua_State *L)
     if (len == sizeof("status") - 1
         && ngx_strncmp(p, "status", sizeof("status") - 1) == 0)
     {
+        ngx_http_lua_check_fake_request(L, r);
         lua_pushnumber(L, (lua_Number) r->headers_out.status);
         return 1;
     }
@@ -78,6 +79,11 @@ ngx_http_lua_ngx_get(lua_State *L)
         && ngx_strncmp(p, "headers_sent", sizeof("headers_sent") - 1) == 0)
     {
         ctx = ngx_http_get_module_ctx(r, ngx_http_lua_module);
+        if (ctx == NULL) {
+            return luaL_error(L, "no ctx");
+        }
+
+        ngx_http_lua_check_fake_request2(L, r, ctx);
 
         dd("headers sent: %d", ctx->headers_sent);
 
@@ -105,16 +111,16 @@ ngx_http_lua_ngx_set(lua_State *L)
     r = lua_touserdata(L, -1);
     lua_pop(L, 1);
 
-    if (r == NULL) {
-        return luaL_error(L, "no request object found");
-    }
-
     /* we skip the first argument that is the table */
     p = (u_char *) luaL_checklstring(L, 2, &len);
 
     if (len == sizeof("status") - 1
         && ngx_strncmp(p, "status", sizeof("status") - 1) == 0)
     {
+        if (r == NULL) {
+            return luaL_error(L, "no request object found");
+        }
+
         ctx = ngx_http_get_module_ctx(r, ngx_http_lua_module);
 
         if (ctx->headers_sent) {
@@ -124,18 +130,26 @@ ngx_http_lua_ngx_set(lua_State *L)
             return 0;
         }
 
+        ngx_http_lua_check_fake_request2(L, r, ctx);
+
         /* get the value */
         r->headers_out.status = (ngx_uint_t) luaL_checknumber(L, 3);
+        r->headers_out.status_line.len = 0;
         return 0;
     }
 
     if (len == sizeof("ctx") - 1
         && ngx_strncmp(p, "ctx", sizeof("ctx") - 1) == 0)
     {
+        if (r == NULL) {
+            return luaL_error(L, "no request object found");
+        }
+
         return ngx_http_lua_ngx_set_ctx(L);
     }
 
-    return luaL_error(L, "attempt to write to ngx. with the key \"%s\"", p);
+    lua_rawset(L, -3);
+    return 0;
 }
 
 /* vi:set ft=c ts=4 sw=4 et fdm=marker: */

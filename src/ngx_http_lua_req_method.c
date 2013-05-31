@@ -50,6 +50,8 @@ ngx_http_lua_ngx_req_get_method(lua_State *L)
         return luaL_error(L, "request object not found");
     }
 
+    ngx_http_lua_check_fake_request(L, r);
+
     lua_pushlstring(L, (char *) r->method_name.data, r->method_name.len);
     return 1;
 }
@@ -78,6 +80,8 @@ ngx_http_lua_ngx_req_set_method(lua_State *L)
         return luaL_error(L, "request object not found");
     }
 
+    ngx_http_lua_check_fake_request(L, r);
+
     r->method = method;
 
     switch (method) {
@@ -103,6 +107,42 @@ ngx_http_lua_ngx_req_set_method(lua_State *L)
 
         case NGX_HTTP_OPTIONS:
             r->method_name = ngx_http_lua_options_method;
+            break;
+
+        case NGX_HTTP_MKCOL:
+            r->method_name = ngx_http_lua_mkcol_method;
+            break;
+
+        case NGX_HTTP_COPY:
+            r->method_name = ngx_http_lua_copy_method;
+            break;
+
+        case NGX_HTTP_MOVE:
+            r->method_name = ngx_http_lua_move_method;
+            break;
+
+        case NGX_HTTP_PROPFIND:
+            r->method_name = ngx_http_lua_propfind_method;
+            break;
+
+        case NGX_HTTP_PROPPATCH:
+            r->method_name = ngx_http_lua_proppatch_method;
+            break;
+
+        case NGX_HTTP_LOCK:
+            r->method_name = ngx_http_lua_lock_method;
+            break;
+
+        case NGX_HTTP_UNLOCK:
+            r->method_name = ngx_http_lua_unlock_method;
+            break;
+
+        case NGX_HTTP_PATCH:
+            r->method_name = ngx_http_lua_patch_method;
+            break;
+
+        case NGX_HTTP_TRACE:
+            r->method_name = ngx_http_lua_trace_method;
             break;
 
         default:

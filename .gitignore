@@ -149,9 +149,13 @@ tre
 src/phase.[ch]
 src/probe.h
 src/uthread.[ch]
+src/timer.[ch]
 *.plist
 lua
+ttimer
 Makefile
 tsubreq
 tthread
 addr2line
+hup
+theaders

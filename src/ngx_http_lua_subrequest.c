@@ -34,6 +34,21 @@ ngx_str_t  ngx_http_lua_delete_method =
         ngx_http_lua_method_name("DELETE");
 ngx_str_t  ngx_http_lua_options_method =
         ngx_http_lua_method_name("OPTIONS");
+ngx_str_t  ngx_http_lua_copy_method = ngx_http_lua_method_name("COPY");
+ngx_str_t  ngx_http_lua_move_method = ngx_http_lua_method_name("MOVE");
+ngx_str_t  ngx_http_lua_lock_method = ngx_http_lua_method_name("LOCK");
+ngx_str_t  ngx_http_lua_mkcol_method =
+        ngx_http_lua_method_name("MKCOL");
+ngx_str_t  ngx_http_lua_propfind_method =
+        ngx_http_lua_method_name("PROPFIND");
+ngx_str_t  ngx_http_lua_proppatch_method =
+        ngx_http_lua_method_name("PROPPATCH");
+ngx_str_t  ngx_http_lua_unlock_method =
+        ngx_http_lua_method_name("UNLOCK");
+ngx_str_t  ngx_http_lua_patch_method =
+        ngx_http_lua_method_name("PATCH");
+ngx_str_t  ngx_http_lua_trace_method =
+        ngx_http_lua_method_name("TRACE");
 
 
 static ngx_str_t  ngx_http_lua_content_length_header_key =
@@ -59,6 +74,7 @@ static void ngx_http_lua_handle_subreq_responses(ngx_http_request_t *r,
     ngx_http_lua_ctx_t *ctx);
 static void ngx_http_lua_cancel_subreq(ngx_http_request_t *r);
 static ngx_int_t ngx_http_post_request_to_head(ngx_http_request_t *r);
+static ngx_int_t ngx_http_lua_copy_in_file_request_body(ngx_http_request_t *r);
 
 
 /* ngx.location.capture is just a thin wrapper around
@@ -121,6 +137,7 @@ ngx_http_lua_ngx_location_capture_multi(lua_State *L)
     size_t                           sr_statuses_len;
     size_t                           sr_headers_len;
     size_t                           sr_bodies_len;
+    size_t                           sr_flags_len;
     unsigned                         custom_ctx;
     ngx_http_lua_co_ctx_t           *coctx;
 
@@ -168,9 +185,10 @@ ngx_http_lua_ngx_location_capture_multi(lua_State *L)
     sr_statuses_len = nsubreqs * sizeof(ngx_int_t);
     sr_headers_len  = nsubreqs * sizeof(ngx_http_headers_out_t *);
     sr_bodies_len   = nsubreqs * sizeof(ngx_str_t);
+    sr_flags_len    = nsubreqs * sizeof(uint8_t);
 
     p = ngx_pcalloc(r->pool, sr_statuses_len + sr_headers_len +
-                    sr_bodies_len);
+                    sr_bodies_len + sr_flags_len);
 
     if (p == NULL) {
         return luaL_error(L, "out of memory");
@@ -183,6 +201,9 @@ ngx_http_lua_ngx_location_capture_multi(lua_State *L)
     p += sr_headers_len;
 
     coctx->sr_bodies = (void *) p;
+    p += sr_bodies_len;
+
+    coctx->sr_flags = (void *) p;
 
     coctx->nsubreqs = nsubreqs;
 
@@ -400,8 +421,7 @@ ngx_http_lua_ngx_location_capture_multi(lua_State *L)
                     return luaL_error(L, "Bad http request body");
                 }
 
-                body = ngx_pcalloc(r->pool,
-                        sizeof(ngx_http_request_body_t));
+                body = ngx_pcalloc(r->pool, sizeof(ngx_http_request_body_t));
 
                 if (body == NULL) {
                     return luaL_error(L, "out of memory");
@@ -471,7 +491,17 @@ ngx_http_lua_ngx_location_capture_multi(lua_State *L)
         }
 
         if (args.len == 0) {
-            args = extra_args;
+            if (extra_args.len) {
+                p = ngx_palloc(r->pool, extra_args.len);
+                if (p == NULL) {
+                    return luaL_error(L, "out of memory");
+                }
+
+                ngx_memcpy(p, extra_args.data, extra_args.len);
+
+                args.data = p;
+                args.len = extra_args.len;
+            }
 
         } else if (extra_args.len) {
             /* concatenate the two parts of args together */
@@ -606,6 +636,16 @@ ngx_http_lua_adjust_subrequest(ngx_http_request_t *sr, ngx_uint_t method,
 #if 1
         sr->request_body = NULL;
 #endif
+
+    } else if (sr->request_body) {
+
+        /* deep-copy the request body */
+
+        if (sr->request_body->temp_file) {
+            if (ngx_http_lua_copy_in_file_request_body(sr) != NGX_OK) {
+                return NGX_ERROR;
+            }
+        }
     }
 
     sr->method = method;
@@ -633,6 +673,42 @@ ngx_http_lua_adjust_subrequest(ngx_http_request_t *sr, ngx_uint_t method,
 
         case NGX_HTTP_OPTIONS:
             sr->method_name = ngx_http_lua_options_method;
+            break;
+
+        case NGX_HTTP_MKCOL:
+            sr->method_name = ngx_http_lua_mkcol_method;
+            break;
+
+        case NGX_HTTP_COPY:
+            sr->method_name = ngx_http_lua_copy_method;
+            break;
+
+        case NGX_HTTP_MOVE:
+            sr->method_name = ngx_http_lua_move_method;
+            break;
+
+        case NGX_HTTP_PROPFIND:
+            sr->method_name = ngx_http_lua_propfind_method;
+            break;
+
+        case NGX_HTTP_PROPPATCH:
+            sr->method_name = ngx_http_lua_proppatch_method;
+            break;
+
+        case NGX_HTTP_LOCK:
+            sr->method_name = ngx_http_lua_lock_method;
+            break;
+
+        case NGX_HTTP_UNLOCK:
+            sr->method_name = ngx_http_lua_unlock_method;
+            break;
+
+        case NGX_HTTP_PATCH:
+            sr->method_name = ngx_http_lua_patch_method;
+            break;
+
+        case NGX_HTTP_TRACE:
+            sr->method_name = ngx_http_lua_trace_method;
             break;
 
         default:
@@ -904,22 +980,25 @@ ngx_http_lua_post_subrequest(ngx_http_request_t *r, void *data, ngx_int_t rc)
     dd("uri: %.*s", (int) r->uri.len, r->uri.data);
 
     /*  capture subrequest response status */
-    if (rc == NGX_ERROR) {
-        pr_coctx->sr_statuses[ctx->index] = NGX_HTTP_INTERNAL_SERVER_ERROR;
 
-    } else if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
-        pr_coctx->sr_statuses[ctx->index] = rc;
-
-    } else {
-        pr_coctx->sr_statuses[ctx->index] = r->headers_out.status;
-    }
-
-    if (r->headers_out.status >= NGX_HTTP_SPECIAL_RESPONSE) {
-        pr_coctx->sr_statuses[ctx->index] = r->headers_out.status;
-    }
+    pr_coctx->sr_statuses[ctx->index] = r->headers_out.status;
 
     if (pr_coctx->sr_statuses[ctx->index] == 0) {
-        pr_coctx->sr_statuses[ctx->index] = NGX_HTTP_OK;
+        if (rc == NGX_OK) {
+            rc = NGX_HTTP_OK;
+        }
+
+        if (rc == NGX_ERROR) {
+            rc = NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+
+        if (rc >= NGX_HTTP_SPECIAL_RESPONSE) {
+            pr_coctx->sr_statuses[ctx->index] = rc;
+        }
+    }
+
+    if (!ctx->seen_last_for_subreq) {
+        pr_coctx->sr_flags[ctx->index] |= NGX_HTTP_LUA_SUBREQ_TRUNCATED;
     }
 
     dd("pr_coctx status: %d", (int) pr_coctx->sr_statuses[ctx->index]);
@@ -1154,6 +1233,18 @@ ngx_http_lua_handle_subreq_responses(ngx_http_request_t *r,
         /*  copy captured status */
         lua_pushinteger(co, coctx->sr_statuses[index]);
         lua_setfield(co, -2, "status");
+
+        dd("captured subrequest flags: %d", (int) coctx->sr_flags[index]);
+
+        /* set truncated flag if truncation happens */
+        if (coctx->sr_flags[index] & NGX_HTTP_LUA_SUBREQ_TRUNCATED) {
+            lua_pushboolean(co, 1);
+            lua_setfield(co, -2, "truncated");
+
+        } else {
+            lua_pushboolean(co, 0);
+            lua_setfield(co, -2, "truncated");
+        }
 
         /*  copy captured body */
 
@@ -1477,6 +1568,7 @@ ngx_http_lua_subrequest_resume(ngx_http_request_t *r)
     coctx->sr_statuses = NULL;
     coctx->sr_headers = NULL;
     coctx->sr_bodies = NULL;
+    coctx->sr_flags = NULL;
 #endif
 
     c = r->connection;
@@ -1491,14 +1583,14 @@ ngx_http_lua_subrequest_resume(ngx_http_request_t *r)
     }
 
     if (rc == NGX_DONE) {
-        ngx_http_finalize_request(r, NGX_DONE);
+        ngx_http_lua_finalize_request(r, NGX_DONE);
         return ngx_http_lua_run_posted_threads(c, lmcf->lua, r, ctx);
     }
 
     /* rc == NGX_ERROR || rc >= NGX_OK */
 
     if (ctx->entered_content_phase) {
-        ngx_http_finalize_request(r, rc);
+        ngx_http_lua_finalize_request(r, rc);
         return NGX_DONE;
     }
 
@@ -1541,6 +1633,43 @@ ngx_http_post_request_to_head(ngx_http_request_t *r)
     pr->request = r;
     pr->next = r->main->posted_requests;
     r->main->posted_requests = pr;
+
+    return NGX_OK;
+}
+
+
+static ngx_int_t
+ngx_http_lua_copy_in_file_request_body(ngx_http_request_t *r)
+{
+    ngx_temp_file_t     *tf;
+
+    ngx_http_request_body_t   *body;
+
+    tf = r->request_body->temp_file;
+
+    if (!tf->persistent || !tf->clean) {
+        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                      "the request body was not read by ngx_lua");
+
+        return NGX_ERROR;
+    }
+
+    body = ngx_palloc(r->pool, sizeof(ngx_http_request_body_t));
+    if (body == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_memcpy(body, r->request_body, sizeof(ngx_http_request_body_t));
+
+    body->temp_file = ngx_palloc(r->pool, sizeof(ngx_temp_file_t));
+    if (body->temp_file == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_memcpy(body->temp_file, tf, sizeof(ngx_temp_file_t));
+    dd("file fd: %d", body->temp_file->file.fd);
+
+    r->request_body = body;
 
     return NGX_OK;
 }

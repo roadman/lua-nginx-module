@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use Test::Nginx::Socket;
+use t::TestNginxLua;
 
 #worker_connections(1014);
 #master_on();
@@ -9,7 +9,7 @@ log_level('warn');
 
 repeat_each(2);
 
-plan tests => repeat_each() * (blocks() * 2 + 2);
+plan tests => repeat_each() * (blocks() * 2 + 3);
 
 #no_diff();
 #no_long_string();
@@ -321,22 +321,26 @@ he
 --- config
     location /re {
         content_by_lua '
-            rc, m = pcall(ngx.re.match, "hello\\nworld", "(abc", "o")
-            if rc then
-                if m then
-                    ngx.say(m[0])
+            local m, err = ngx.re.match("hello\\nworld", "(abc", "o")
+            if m then
+                ngx.say(m[0])
+
+            else
+                if err then
+                    ngx.say("error: ", err)
+
                 else
                     ngx.say("not matched: ", m)
                 end
-            else
-                ngx.say("error: ", m)
             end
         ';
     }
 --- request
     GET /re
 --- response_body
-error: bad argument #2 to '?' (failed to compile regex "(abc": pcre_compile() failed: missing ) in "(abc")
+error: pcre_compile() failed: missing ) in "(abc"
+--- no_error_log
+[error]
 
 
 
@@ -358,8 +362,8 @@ error: bad argument #2 to '?' (failed to compile regex "(abc": pcre_compile() fa
     }
 --- request
     GET /re
---- response_body
-error: bad argument #3 to '?' (unknown flag "H")
+--- response_body_like chop
+^error: .*?unknown flag "H"
 
 
 

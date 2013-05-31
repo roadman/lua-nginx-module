@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use Test::Nginx::Socket;
+use t::TestNginxLua;
 
 #worker_connections(1014);
 #master_on();
@@ -9,7 +9,7 @@ log_level('warn');
 
 repeat_each(2);
 
-plan tests => repeat_each() * (blocks() * 2 + 9);
+plan tests => repeat_each() * (blocks() * 2 + 14);
 
 #no_diff();
 no_long_string();
@@ -400,6 +400,101 @@ n: 1
 --- response_body
 [a] [b] [c] [d]
 4
+--- no_error_log
+[error]
+
+
+
+=== TEST 20: bad UTF-8
+--- config
+    location = /t {
+        content_by_lua '
+            local target = "你好"
+            local regex = "你好"
+
+            -- Note the D here
+            local s, n, err = ngx.re.gsub(string.sub(target, 1, 4), regex, "", "u")
+
+            if s then
+                ngx.say(s, ": ", n)
+            else
+                ngx.say("error: ", err)
+            end
+       ';
+    }
+--- request
+GET /t
+--- response_body_like chop
+error: pcre_exec\(\) failed: -10
+
+--- no_error_log
+[error]
+
+
+
+=== TEST 21: UTF-8 mode without UTF-8 sequence checks
+--- config
+    location /re {
+        content_by_lua '
+            local s, n, err = ngx.re.gsub("你好", ".", "a", "U")
+            if s then
+                ngx.say("s: ", s)
+            end
+        ';
+    }
+--- stap
+probe process("$LIBPCRE_PATH").function("pcre_compile") {
+    printf("compile opts: %x\n", $options)
+}
+
+probe process("$LIBPCRE_PATH").function("pcre_exec") {
+    printf("exec opts: %x\n", $options)
+}
+
+--- stap_out
+compile opts: 800
+exec opts: 2000
+exec opts: 2000
+exec opts: 2000
+
+--- request
+    GET /re
+--- response_body
+s: aa
+--- no_error_log
+[error]
+
+
+
+=== TEST 22: UTF-8 mode with UTF-8 sequence checks
+--- config
+    location /re {
+        content_by_lua '
+            local s, n, err = ngx.re.gsub("你好", ".", "a", "u")
+            if s then
+                ngx.say("s: ", s)
+            end
+        ';
+    }
+--- stap
+probe process("$LIBPCRE_PATH").function("pcre_compile") {
+    printf("compile opts: %x\n", $options)
+}
+
+probe process("$LIBPCRE_PATH").function("pcre_exec") {
+    printf("exec opts: %x\n", $options)
+}
+
+--- stap_out
+compile opts: 800
+exec opts: 0
+exec opts: 0
+exec opts: 0
+
+--- request
+    GET /re
+--- response_body
+s: aa
 --- no_error_log
 [error]
 

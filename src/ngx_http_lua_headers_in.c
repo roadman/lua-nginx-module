@@ -20,10 +20,16 @@ static ngx_int_t ngx_http_set_header(ngx_http_request_t *r,
     ngx_http_lua_header_val_t *hv, ngx_str_t *value);
 static ngx_int_t ngx_http_set_header_helper(ngx_http_request_t *r,
     ngx_http_lua_header_val_t *hv, ngx_str_t *value,
-    ngx_table_elt_t **output_header, unsigned no_create);
+    ngx_table_elt_t **output_header);
 static ngx_int_t ngx_http_set_builtin_header(ngx_http_request_t *r,
     ngx_http_lua_header_val_t *hv, ngx_str_t *value);
+static ngx_int_t ngx_http_set_user_agent_header(ngx_http_request_t *r,
+    ngx_http_lua_header_val_t *hv, ngx_str_t *value);
+static ngx_int_t ngx_http_set_connection_header(ngx_http_request_t *r,
+    ngx_http_lua_header_val_t *hv, ngx_str_t *value);
 static ngx_int_t ngx_http_set_content_length_header(ngx_http_request_t *r,
+    ngx_http_lua_header_val_t *hv, ngx_str_t *value);
+static ngx_int_t ngx_http_set_cookie_header(ngx_http_request_t *r,
     ngx_http_lua_header_val_t *hv, ngx_str_t *value);
 static ngx_int_t ngx_http_clear_builtin_header(ngx_http_request_t *r,
     ngx_http_lua_header_val_t *hv, ngx_str_t *value);
@@ -41,6 +47,10 @@ static ngx_http_lua_set_header_t  ngx_http_lua_set_handlers[] = {
     { ngx_string("Accept-Encoding"),
                  offsetof(ngx_http_headers_in_t, accept_encoding),
                  ngx_http_set_builtin_header },
+
+    { ngx_string("Via"),
+                 offsetof(ngx_http_headers_in_t, via),
+                 ngx_http_set_builtin_header },
 #endif
 
     { ngx_string("Host"),
@@ -49,7 +59,7 @@ static ngx_http_lua_set_header_t  ngx_http_lua_set_handlers[] = {
 
     { ngx_string("Connection"),
                  offsetof(ngx_http_headers_in_t, connection),
-                 ngx_http_set_builtin_header },
+                 ngx_http_set_connection_header },
 
     { ngx_string("If-Modified-Since"),
                  offsetof(ngx_http_headers_in_t, if_modified_since),
@@ -57,7 +67,7 @@ static ngx_http_lua_set_header_t  ngx_http_lua_set_handlers[] = {
 
     { ngx_string("User-Agent"),
                  offsetof(ngx_http_headers_in_t, user_agent),
-                 ngx_http_set_builtin_header },
+                 ngx_http_set_user_agent_header },
 
     { ngx_string("Referer"),
                  offsetof(ngx_http_headers_in_t, referer),
@@ -95,6 +105,16 @@ static ngx_http_lua_set_header_t  ngx_http_lua_set_handlers[] = {
                  offsetof(ngx_http_headers_in_t, content_length),
                  ngx_http_set_content_length_header },
 
+    { ngx_string("Cookie"),
+                 0,
+                 ngx_http_set_cookie_header },
+
+#if (NGX_HTTP_REALIP)
+    { ngx_string("X-Real-IP"),
+                 offsetof(ngx_http_headers_in_t, x_real_ip),
+                 ngx_http_set_builtin_header },
+#endif
+
     { ngx_null_string, 0, ngx_http_set_header }
 };
 
@@ -105,14 +125,13 @@ static ngx_int_t
 ngx_http_set_header(ngx_http_request_t *r, ngx_http_lua_header_val_t *hv,
     ngx_str_t *value)
 {
-    return ngx_http_set_header_helper(r, hv, value, NULL, 0);
+    return ngx_http_set_header_helper(r, hv, value, NULL);
 }
 
 
 static ngx_int_t
 ngx_http_set_header_helper(ngx_http_request_t *r, ngx_http_lua_header_val_t *hv,
-    ngx_str_t *value, ngx_table_elt_t **output_header,
-    unsigned no_create)
+    ngx_str_t *value, ngx_table_elt_t **output_header)
 {
     ngx_table_elt_t             *h;
     ngx_list_part_t             *part;
@@ -178,7 +197,7 @@ new_header:
     h = ngx_list_push(&r->headers_in.headers);
 
     if (h == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        return NGX_ERROR;
     }
 
     dd("created new header for %.*s", (int) hv->key.len, hv->key.data);
@@ -195,7 +214,7 @@ new_header:
 
     h->lowcase_key = ngx_pnalloc(r->pool, h->key.len);
     if (h->lowcase_key == NULL) {
-        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        return NGX_ERROR;
     }
 
     ngx_strlow(h->lowcase_key, h->key.data, h->key.len);
@@ -235,7 +254,7 @@ ngx_http_set_builtin_header(ngx_http_request_t *r,
 
     if (old == NULL || *old == NULL) {
         dd("set normal header");
-        return ngx_http_set_header_helper(r, hv, value, old, 0);
+        return ngx_http_set_header_helper(r, hv, value, old);
     }
 
     h = *old;
@@ -244,7 +263,7 @@ ngx_http_set_builtin_header(ngx_http_request_t *r,
         h->hash = 0;
         h->value = *value;
 
-        return ngx_http_set_header_helper(r, hv, value, old, 0);
+        return ngx_http_set_header_helper(r, hv, value, old);
     }
 
     h->hash = hv->hash;
@@ -261,6 +280,103 @@ ngx_http_set_host_header(ngx_http_request_t *r, ngx_http_lua_header_val_t *hv,
     dd("server new value len: %d", (int) value->len);
 
     r->headers_in.server = *value;
+
+    return ngx_http_set_builtin_header(r, hv, value);
+}
+
+
+static ngx_int_t
+ngx_http_set_connection_header(ngx_http_request_t *r,
+    ngx_http_lua_header_val_t *hv, ngx_str_t *value)
+{
+    r->headers_in.connection_type = 0;
+
+    if (value->len == 0) {
+        return ngx_http_set_builtin_header(r, hv, value);
+    }
+
+    if (ngx_strcasestrn(value->data, "close", 5 - 1)) {
+        r->headers_in.connection_type = NGX_HTTP_CONNECTION_CLOSE;
+        r->headers_in.keep_alive_n = -1;
+
+    } else if (ngx_strcasestrn(value->data, "keep-alive", 10 - 1)) {
+        r->headers_in.connection_type = NGX_HTTP_CONNECTION_KEEP_ALIVE;
+    }
+
+    return ngx_http_set_builtin_header(r, hv, value);
+}
+
+
+/* borrowed the code from ngx_http_request.c:ngx_http_process_user_agent */
+static ngx_int_t
+ngx_http_set_user_agent_header(ngx_http_request_t *r,
+    ngx_http_lua_header_val_t *hv, ngx_str_t *value)
+{
+    u_char  *user_agent, *msie;
+
+    /* clear existing settings */
+
+    r->headers_in.msie = 0;
+    r->headers_in.msie6 = 0;
+    r->headers_in.opera = 0;
+    r->headers_in.gecko = 0;
+    r->headers_in.chrome = 0;
+    r->headers_in.safari = 0;
+    r->headers_in.konqueror = 0;
+
+    if (value->len == 0) {
+        return ngx_http_set_builtin_header(r, hv, value);
+    }
+
+    /* check some widespread browsers */
+
+    user_agent = value->data;
+
+    msie = ngx_strstrn(user_agent, "MSIE ", 5 - 1);
+
+    if (msie && msie + 7 < user_agent + value->len) {
+
+        r->headers_in.msie = 1;
+
+        if (msie[6] == '.') {
+
+            switch (msie[5]) {
+            case '4':
+            case '5':
+                r->headers_in.msie6 = 1;
+                break;
+            case '6':
+                if (ngx_strstrn(msie + 8, "SV1", 3 - 1) == NULL) {
+                    r->headers_in.msie6 = 1;
+                }
+                break;
+            }
+        }
+    }
+
+    if (ngx_strstrn(user_agent, "Opera", 5 - 1)) {
+        r->headers_in.opera = 1;
+        r->headers_in.msie = 0;
+        r->headers_in.msie6 = 0;
+    }
+
+    if (!r->headers_in.msie && !r->headers_in.opera) {
+
+        if (ngx_strstrn(user_agent, "Gecko/", 6 - 1)) {
+            r->headers_in.gecko = 1;
+
+        } else if (ngx_strstrn(user_agent, "Chrome/", 7 - 1)) {
+            r->headers_in.chrome = 1;
+
+        } else if (ngx_strstrn(user_agent, "Safari/", 7 - 1)
+                   && ngx_strstrn(user_agent, "Mac OS X", 8 - 1))
+        {
+            r->headers_in.safari = 1;
+
+        } else if (ngx_strstrn(user_agent, "Konqueror", 9 - 1)) {
+            r->headers_in.konqueror = 1;
+        }
+    }
 
     return ngx_http_set_builtin_header(r, hv, value);
 }
@@ -286,6 +402,56 @@ ngx_http_set_content_length_header(ngx_http_request_t *r,
     r->headers_in.content_length_n = len;
 
     return ngx_http_set_builtin_header(r, hv, value);
+}
+
+
+static ngx_int_t
+ngx_http_set_cookie_header(ngx_http_request_t *r,
+    ngx_http_lua_header_val_t *hv, ngx_str_t *value)
+{
+    ngx_table_elt_t  **cookie, *h;
+
+    if (!hv->no_override && r->headers_in.cookies.nelts > 0) {
+        ngx_array_destroy(&r->headers_in.cookies);
+
+        if (ngx_array_init(&r->headers_in.cookies, r->pool, 2,
+                           sizeof(ngx_table_elt_t *))
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
+
+        dd("clear headers in cookies: %d", (int) r->headers_in.cookies.nelts);
+    }
+
+#if 1
+    if (r->headers_in.cookies.nalloc == 0) {
+        if (ngx_array_init(&r->headers_in.cookies, r->pool, 2,
+                           sizeof(ngx_table_elt_t *))
+            != NGX_OK)
+        {
+            return NGX_ERROR;
+        }
+    }
+#endif
+
+    if (ngx_http_set_header_helper(r, hv, value, &h) == NGX_ERROR) {
+        return NGX_ERROR;
+    }
+
+    if (value->len == 0) {
+        return NGX_OK;
+    }
+
+    dd("new cookie header: %p", h);
+
+    cookie = ngx_array_push(&r->headers_in.cookies);
+    if (cookie == NULL) {
+        return NGX_ERROR;
+    }
+
+    *cookie = h;
+    return NGX_OK;
 }
 
 
@@ -323,7 +489,7 @@ ngx_http_lua_set_input_header(ngx_http_request_t *r, ngx_str_t key,
     hv.key = key;
 
     hv.offset = 0;
-    hv.no_override = ! override;
+    hv.no_override = !override;
     hv.handler = NULL;
 
     for (i = 0; handlers[i].name.len; i++) {

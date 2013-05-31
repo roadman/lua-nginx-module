@@ -237,7 +237,8 @@ ngx_http_lua_socket_tcp(lua_State *L)
 
     ngx_http_lua_check_context(L, ctx, NGX_HTTP_LUA_CONTEXT_REWRITE
                                | NGX_HTTP_LUA_CONTEXT_ACCESS
-                               | NGX_HTTP_LUA_CONTEXT_CONTENT);
+                               | NGX_HTTP_LUA_CONTEXT_CONTENT
+                               | NGX_HTTP_LUA_CONTEXT_TIMER);
 
     lua_createtable(L, 3 /* narr */, 1 /* nrec */);
     lua_pushlightuserdata(L, &ngx_http_lua_tcp_socket_metatable_key);
@@ -297,7 +298,8 @@ ngx_http_lua_socket_tcp_connect(lua_State *L)
 
     ngx_http_lua_check_context(L, ctx, NGX_HTTP_LUA_CONTEXT_REWRITE
                                | NGX_HTTP_LUA_CONTEXT_ACCESS
-                               | NGX_HTTP_LUA_CONTEXT_CONTENT);
+                               | NGX_HTTP_LUA_CONTEXT_CONTENT
+                               | NGX_HTTP_LUA_CONTEXT_TIMER);
 
     luaL_checktype(L, 1, LUA_TTABLE);
 
@@ -594,6 +596,7 @@ static void
 ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
 {
     ngx_http_request_t                  *r;
+    ngx_connection_t                    *c;
     ngx_http_upstream_resolved_t        *ur;
     ngx_http_lua_ctx_t                  *lctx;
     lua_State                           *L;
@@ -606,9 +609,10 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
 
     u = ctx->data;
     r = u->request;
+    c = r->connection;
     ur = u->resolved;
 
-    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                    "lua tcp socket resolve handler");
 
     lctx = ngx_http_get_module_ctx(r, ngx_http_lua_module);
@@ -625,7 +629,7 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
     waiting = u->waiting;
 
     if (ctx->state) {
-        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+        ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "lua tcp socket resolver error: %s (waiting: %d)",
                        ngx_resolver_strerror(ctx->state), (int) u->waiting);
 
@@ -639,6 +643,11 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
         u->prepare_retvals = ngx_http_lua_socket_error_retval_handler;
         ngx_http_lua_socket_handle_error(r, u,
                                          NGX_HTTP_LUA_SOCKET_FT_RESOLVER);
+
+        if (waiting) {
+            ngx_http_run_posted_requests(c);
+        }
+
         return;
     }
 
@@ -655,7 +664,7 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
 
         addr = ntohl(ctx->addrs[i]);
 
-        ngx_log_debug4(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+        ngx_log_debug4(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "name was resolved to %ud.%ud.%ud.%ud",
                        (addr >> 24) & 0xff, (addr >> 16) & 0xff,
                        (addr >> 8) & 0xff, addr & 0xff);
@@ -669,6 +678,11 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
 
         lua_pushnil(L);
         lua_pushliteral(L, "name cannot be resolved to a address");
+
+        if (waiting) {
+            ngx_http_run_posted_requests(c);
+        }
+
         return;
     }
 
@@ -690,6 +704,11 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
 
         lua_pushnil(L);
         lua_pushliteral(L, "out of memory");
+
+        if (waiting) {
+            ngx_http_run_posted_requests(c);
+        }
+
         return;
     }
 
@@ -719,6 +738,7 @@ ngx_http_lua_socket_resolve_handler(ngx_resolver_ctx_t *ctx)
     if (waiting) {
         lctx->resume_handler = ngx_http_lua_socket_tcp_resume;
         r->write_event_handler(r);
+        ngx_http_run_posted_requests(c);
 
     } else {
         (void) ngx_http_lua_socket_resolve_retval_handler(r, u, L);
@@ -2061,7 +2081,7 @@ ngx_http_lua_socket_send(ngx_http_request_t *r,
                 ctx = ngx_http_get_module_ctx(r, ngx_http_lua_module);
                 if (ctx == NULL) {
                     ngx_http_lua_socket_handle_error(r, u,
-                                                 NGX_HTTP_LUA_SOCKET_FT_ERROR);
+                                                NGX_HTTP_LUA_SOCKET_FT_ERROR);
                     return NGX_ERROR;
                 }
 
@@ -2078,7 +2098,7 @@ ngx_http_lua_socket_send(ngx_http_request_t *r,
 
                 if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
                     ngx_http_lua_socket_handle_error(r, u,
-                                                 NGX_HTTP_LUA_SOCKET_FT_ERROR);
+                                                NGX_HTTP_LUA_SOCKET_FT_ERROR);
                     return NGX_ERROR;
                 }
 
@@ -2109,7 +2129,7 @@ ngx_http_lua_socket_send(ngx_http_request_t *r,
 
     if (ngx_handle_write_event(c->write, u->conf->send_lowat) != NGX_OK) {
         ngx_http_lua_socket_handle_error(r, u,
-                     NGX_HTTP_LUA_SOCKET_FT_ERROR);
+                                         NGX_HTTP_LUA_SOCKET_FT_ERROR);
         return NGX_ERROR;
     }
 
@@ -2990,7 +3010,7 @@ ngx_http_lua_req_socket(lua_State *L)
 
     if (lua_gettop(L) != 0) {
         return luaL_error(L, "expecting zero arguments, but got %d",
-                lua_gettop(L));
+                          lua_gettop(L));
     }
 
     lua_pushlightuserdata(L, &ngx_http_lua_request_key);
@@ -3032,9 +3052,11 @@ ngx_http_lua_req_socket(lua_State *L)
         return 2;
     }
 
-    if (r->headers_in.content_length_n == 0) {
+    dd("req content length: %d", (int) r->headers_in.content_length_n);
+
+    if (r->headers_in.content_length_n <= 0) {
         lua_pushnil(L);
-        lua_pushliteral(L, "request body empty");
+        lua_pushliteral(L, "no body");
         return 2;
     }
 
@@ -3985,12 +4007,12 @@ ngx_http_lua_socket_tcp_resume(ngx_http_request_t *r)
     }
 
     if (rc == NGX_DONE) {
-        ngx_http_finalize_request(r, NGX_DONE);
+        ngx_http_lua_finalize_request(r, NGX_DONE);
         return ngx_http_lua_run_posted_threads(c,lmcf->lua, r, ctx);
     }
 
     if (ctx->entered_content_phase) {
-        ngx_http_finalize_request(r, rc);
+        ngx_http_lua_finalize_request(r, rc);
         return NGX_DONE;
     }
 
