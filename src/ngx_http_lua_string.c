@@ -51,6 +51,8 @@ static int ngx_http_lua_ngx_crc32_short(lua_State *L);
 static int ngx_http_lua_ngx_crc32_long(lua_State *L);
 static int ngx_http_lua_ngx_encode_args(lua_State *L);
 static int ngx_http_lua_ngx_decode_args(lua_State *L);
+static int ngx_http_lua_ngx_encode_hex(lua_State *L);
+static int ngx_http_lua_ngx_decode_hex(lua_State *L);
 #if (NGX_OPENSSL)
 static int ngx_http_lua_ngx_hmac_sha1(lua_State *L);
 #endif
@@ -101,6 +103,13 @@ ngx_http_lua_inject_string_api(lua_State *L)
     lua_pushcfunction(L, ngx_http_lua_ngx_hmac_sha1);
     lua_setfield(L, -2, "hmac_sha1");
 #endif
+
+    lua_pushcfunction(L, ngx_http_lua_ngx_encode_hex);
+    lua_setfield(L, -2, "encode_hex");
+
+    lua_pushcfunction(L, ngx_http_lua_ngx_decode_hex);
+    lua_setfield(L, -2, "decode_hex");
+
 }
 
 
@@ -644,5 +653,111 @@ ngx_http_lua_ngx_hmac_sha1(lua_State *L)
     return 1;
 }
 #endif
+
+static int
+ngx_http_lua_ngx_encode_hex(lua_State *L)
+{
+    ngx_http_request_t      *r;
+    ngx_str_t                p, src;
+
+    lua_pushlightuserdata(L, &ngx_http_lua_request_key);
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    r = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    if (r == NULL) {
+        return luaL_error(L, "no request object found");
+    }
+
+    if (lua_gettop(L) != 1) {
+        return luaL_error(L, "expecting one argument");
+    }
+
+    if (strcmp(luaL_typename(L, 1), (char *) "nil") == 0) {
+        src.data     = (u_char *) "";
+        src.len      = 0;
+
+    } else {
+        src.data = (u_char *) luaL_checklstring(L, 1, &src.len);
+    }
+
+    p.len = src.len * 2;
+
+    p.data = ngx_palloc(r->pool, p.len);
+    if (p.data == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_hex_dump(p.data, src.data, src.len);
+
+    lua_pushlstring(L, (char *) p.data, p.len);
+
+    ngx_pfree(r->pool, p.data);
+
+    return 1;
+}
+
+static int
+ngx_http_lua_ngx_decode_hex(lua_State *L)
+{
+    ngx_http_request_t      *r;
+    ngx_str_t                p, src;
+    ngx_int_t                value;
+    size_t                   len;
+    u_char                  *set, *hexstr;
+
+    lua_pushlightuserdata(L, &ngx_http_lua_request_key);
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    r = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+
+    if (r == NULL) {
+        return luaL_error(L, "no request object found");
+    }
+
+    if (lua_gettop(L) != 1) {
+        return luaL_error(L, "expecting one argument");
+    }
+
+    if (strcmp(luaL_typename(L, 1), (char *) "nil") == 0) {
+        src.data     = (u_char *) "";
+        src.len      = 0;
+
+    } else {
+        src.data = (u_char *) luaL_checklstring(L, 1, &src.len);
+    }
+
+    p.len = src.len >> 1;
+
+    p.data = ngx_palloc(r->pool, p.len);
+    if (p.data == NULL) {
+        return NGX_ERROR;
+    }
+
+    for(len = p.len, set = p.data, hexstr = src.data;
+        len;
+        hexstr += 2, len--)
+    {
+        if((value = ngx_hextoi(hexstr, 2)) == NGX_ERROR)
+        {
+            break;
+        }
+
+        *(set++) = value;
+    }
+
+    if(len)
+    {
+        lua_pushnil(L);
+    }
+    else
+    {
+        lua_pushlstring(L, (char *) p.data, p.len);
+    }
+
+    ngx_pfree(r->pool, p.data);
+
+    return 1;
+}
 
 /* vi:set ft=c ts=4 sw=4 et fdm=marker: */
