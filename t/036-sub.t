@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -323,6 +323,7 @@ hello, 34
 false
 bad argument #3 to '?' (string, number, or function expected, got boolean)
 nil
+--- SKIP
 
 
 
@@ -346,6 +347,7 @@ hello, 724
 
 
 === TEST 18: bad function return value type
+--- SKIP
 --- config
     location /re {
         content_by_lua '
@@ -570,4 +572,78 @@ exec opts: 0
 s: a好
 --- no_error_log
 [error]
+
+
+
+=== TEST 28: just hit match limit
+--- http_config
+    lua_regex_match_limit 5600;
+--- config
+    location /re {
+        content_by_lua_file html/a.lua;
+    }
+
+--- user_files
+>>> a.lua
+local re = [==[(?i:([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:=|<=>|r?like|sounds\s+like|regexp)([\s'\"`´’‘\(\)]*)?\2|([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:!=|<=|>=|<>|<|>|\^|is\s+not|not\s+like|not\s+regexp)([\s'\"`´’‘\(\)]*)?(?!\6)([\d\w]+))]==]
+
+s = string.rep([[ABCDEFG]], 10)
+
+local start = ngx.now()
+
+local res, cnt, err = ngx.re.sub(s, re, "", "o")
+
+--[[
+ngx.update_time()
+local elapsed = ngx.now() - start
+ngx.say(elapsed, " sec elapsed.")
+]]
+
+if err then
+    ngx.say("error: ", err)
+    return
+end
+ngx.say("sub: ", cnt)
+
+--- request
+    GET /re
+--- response_body
+error: pcre_exec() failed: -8
+
+
+
+=== TEST 29: just not hit match limit
+--- http_config
+    lua_regex_match_limit 5700;
+--- config
+    location /re {
+        content_by_lua_file html/a.lua;
+    }
+
+--- user_files
+>>> a.lua
+local re = [==[(?i:([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:=|<=>|r?like|sounds\s+like|regexp)([\s'\"`´’‘\(\)]*)?\2|([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:!=|<=|>=|<>|<|>|\^|is\s+not|not\s+like|not\s+regexp)([\s'\"`´’‘\(\)]*)?(?!\6)([\d\w]+))]==]
+
+local s = string.rep([[ABCDEFG]], 10)
+
+local start = ngx.now()
+
+local res, cnt, err = ngx.re.sub(s, re, "", "o")
+
+--[[
+ngx.update_time()
+local elapsed = ngx.now() - start
+ngx.say(elapsed, " sec elapsed.")
+]]
+
+if err then
+    ngx.say("error: ", err)
+    return
+end
+ngx.say("sub: ", cnt)
+
+--- request
+    GET /re
+--- response_body
+sub: 0
 

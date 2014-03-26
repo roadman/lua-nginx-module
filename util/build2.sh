@@ -3,7 +3,7 @@
 # this file is mostly meant to be used by the author himself.
 
 root=`pwd`
-version=${1:-1.2.1}
+version=${1:-1.4.1}
 home=~
 force=$2
 
@@ -24,7 +24,8 @@ time ngx-build $force $version \
         --with-http_ssl_module \
             --add-module=$root/../ndk-nginx-module \
             --add-module=$root/../set-misc-nginx-module \
-            --with-ld-opt="-L$PCRE_LIB -Wl,-rpath,$PCRE_LIB:$LIBDRIZZLE_LIB:$LUAJIT_LIB:/usr/local/lib" \
+            --with-ld-opt="-L$PCRE_LIB -Wl,-rpath,$PCRE_LIB:$LIBDRIZZLE_LIB:/usr/local/lib" \
+            --with-http_spdy_module \
             --without-mail_pop3_module \
             --without-mail_imap_module \
             --without-mail_smtp_module \
@@ -38,12 +39,13 @@ time ngx-build $force $version \
                 --add-module=$root/../memc-nginx-module \
                 --add-module=$root/../srcache-nginx-module \
                 --add-module=$root \
+                --add-module=$root/../lua-upstream-nginx-module \
               --add-module=$root/../headers-more-nginx-module \
                 --add-module=$root/../drizzle-nginx-module \
-                --add-module=$home/work/nginx/ngx_http_upstream_keepalive-0.7 \
                 --add-module=$root/../rds-json-nginx-module \
                 --add-module=$root/../coolkit-nginx-module \
                 --add-module=$root/../redis2-nginx-module \
+                --with-http_gunzip_module \
           --with-select_module \
           --with-poll_module \
           --with-rtsig_module \

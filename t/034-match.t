@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_on();
@@ -202,7 +202,7 @@ not matched: nil
 
 
 
-=== TEST 10: case sensitive by default
+=== TEST 10: case insensitive
 --- config
     location /re {
         content_by_lua '
@@ -372,7 +372,7 @@ error: pcre_compile() failed: missing ) in "(abc"
 --- config
     location /re {
         content_by_lua '
-            rc, m = pcall(ngx.re.match, "hello\\nworld", ".*", "H")
+            rc, m = pcall(ngx.re.match, "hello\\nworld", ".*", "Hm")
             if rc then
                 if m then
                     ngx.say(m[0])
@@ -387,7 +387,7 @@ error: pcre_compile() failed: missing ) in "(abc"
 --- request
     GET /re
 --- response_body_like chop
-error: .*?unknown flag "H"
+error: .*?unknown flag "H" \(flags "Hm"\)
 
 
 
@@ -495,7 +495,7 @@ not matched!
     GET /re
 --- response_body
 1234
-4
+5
 
 
 
@@ -503,7 +503,7 @@ not matched!
 --- config
     location /re {
         content_by_lua '
-            local ctx = { pos = 2 }
+            local ctx = { pos = 3 }
             m = ngx.re.match("1234, hello", "([0-9]+)", "", ctx)
             if m then
                 ngx.say(m[0])
@@ -518,7 +518,7 @@ not matched!
     GET /re
 --- response_body
 34
-4
+5
 
 
 
@@ -732,7 +732,7 @@ done
 --- request
     GET /re
 --- response_body
-pos: 0
+pos: 1
 m: 
 --- no_error_log
 [error]
@@ -1012,4 +1012,116 @@ exec opts: 0
 你
 --- no_error_log
 [error]
+
+
+
+=== TEST 45: just hit match limit
+--- http_config
+    lua_regex_match_limit 5600;
+--- config
+    location /re {
+        content_by_lua_file html/a.lua;
+    }
+
+--- user_files
+>>> a.lua
+local re = [==[(?i:([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:=|<=>|r?like|sounds\s+like|regexp)([\s'\"`´’‘\(\)]*)?\2|([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:!=|<=|>=|<>|<|>|\^|is\s+not|not\s+like|not\s+regexp)([\s'\"`´’‘\(\)]*)?(?!\6)([\d\w]+))]==]
+
+s = string.rep([[ABCDEFG]], 10)
+
+local start = ngx.now()
+
+local res, err = ngx.re.match(s, re, "o")
+
+--[[
+ngx.update_time()
+local elapsed = ngx.now() - start
+ngx.say(elapsed, " sec elapsed.")
+]]
+
+if not res then
+    if err then
+        ngx.say("error: ", err)
+        return
+    end
+    ngx.say("failed to match")
+    return
+end
+
+--- request
+    GET /re
+--- response_body
+error: pcre_exec() failed: -8
+
+
+
+=== TEST 46: just not hit match limit
+--- http_config
+    lua_regex_match_limit 5700;
+--- config
+    location /re {
+        content_by_lua_file html/a.lua;
+    }
+
+--- user_files
+>>> a.lua
+local re = [==[(?i:([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:=|<=>|r?like|sounds\s+like|regexp)([\s'\"`´’‘\(\)]*)?\2|([\s'\"`´’‘\(\)]*)?([\d\w]+)([\s'\"`´’‘\(\)]*)?(?:!=|<=|>=|<>|<|>|\^|is\s+not|not\s+like|not\s+regexp)([\s'\"`´’‘\(\)]*)?(?!\6)([\d\w]+))]==]
+
+s = string.rep([[ABCDEFG]], 10)
+
+local start = ngx.now()
+
+local res, err = ngx.re.match(s, re, "o")
+
+--[[
+ngx.update_time()
+local elapsed = ngx.now() - start
+ngx.say(elapsed, " sec elapsed.")
+]]
+
+if not res then
+    if err then
+        ngx.say("error: ", err)
+        return
+    end
+    ngx.say("failed to match")
+    return
+end
+
+--- request
+    GET /re
+--- response_body
+failed to match
+
+
+
+=== TEST 47: extra table argument
+--- config
+    location /re {
+        content_by_lua '
+            local res = {}
+            local s = "hello, 1234"
+            m = ngx.re.match(s, [[(\\d)(\\d)]], "o", nil, res)
+            if m then
+                ngx.say("1: m size: ", #m)
+                ngx.say("1: res size: ", #res)
+            else
+                ngx.say("1: not matched!")
+            end
+            m = ngx.re.match(s, [[(\\d)]], "o", nil, res)
+            if m then
+                ngx.say("2: m size: ", #m)
+                ngx.say("2: res size: ", #res)
+            else
+                ngx.say("2: not matched!")
+            end
+        ';
+    }
+--- request
+    GET /re
+--- response_body
+1: m size: 2
+1: res size: 2
+2: m size: 2
+2: res size: 2
 

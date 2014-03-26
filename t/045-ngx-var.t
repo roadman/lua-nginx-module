@@ -1,6 +1,6 @@
 # vim:set ft= ts=4 sw=4 et fdm=marker:
 use lib 'lib';
-use t::TestNginxLua;
+use Test::Nginx::Socket::Lua;
 
 #worker_connections(1014);
 #master_process_enabled(1);
@@ -8,7 +8,7 @@ use t::TestNginxLua;
 
 repeat_each(2);
 
-plan tests => repeat_each() * (blocks() * 2 + 2);
+plan tests => repeat_each() * (blocks() * 2 + 7);
 
 #no_diff();
 #no_long_string();
@@ -152,4 +152,79 @@ invalid referer: 1
 
 --- no_error_log
 [error]
+
+
+
+=== TEST 8: $proxy_host & $proxy_port
+--- config
+    location = /t {
+        proxy_pass http://127.0.0.1:$server_port/back;
+        header_filter_by_lua '
+            ngx.header["Proxy-Host"] = ngx.var.proxy_host
+            ngx.header["Proxy-Port"] = ngx.var.proxy_port
+        ';
+    }
+
+    location = /back {
+        echo hello;
+    }
+--- request
+GET /t
+--- raw_response_headers_like
+Proxy-Host: 127.0.0.1\:\d+\r
+Proxy-Port: \d+\r
+--- response_body
+hello
+--- no_error_log
+[error]
+
+
+
+=== TEST 9: get a bad variable name
+--- config
+    location = /test {
+        set $true 32;
+        content_by_lua '
+            ngx.say("value: ", ngx.var[true])
+        ';
+    }
+--- request
+GET /test
+--- response_body_like: 500 Internal Server Error
+--- error_log
+bad variable name
+--- error_code: 500
+
+
+
+=== TEST 10: set a bad variable name
+--- config
+    location = /test {
+        set $true 32;
+        content_by_lua '
+            ngx.var[true] = 56
+        ';
+    }
+--- request
+GET /test
+--- response_body_like: 500 Internal Server Error
+--- error_log
+bad variable name
+--- error_code: 500
+
+
+
+=== TEST 11: set a variable that is not changeable
+--- config
+    location = /test {
+        content_by_lua '
+            ngx.var.query_string = 56
+        ';
+    }
+--- request
+GET /test?hello
+--- response_body_like: 500 Internal Server Error
+--- error_log
+variable "query_string" not changeable
+--- error_code: 500
 
